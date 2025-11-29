@@ -38,7 +38,7 @@ class ClientTrainer(ABC):
         Hint: You may need to handle device placement (CPU/GPU) when loading the state dict.
         """
         # TODO: Implement model state loading
-        raise NotImplementedError("Student must implement set_model")
+        self.client_model.load_state_dict(model_state_dict)
 
     def train(self, lr, local_ep, **kwargs):
         """
@@ -68,4 +68,65 @@ class ClientTrainer(ABC):
         5. Return the trained model's state_dict
         """
         # TODO: Implement local training
-        raise NotImplementedError("Student must implement train method")
+        #move model to device
+        self.client_model.to(self.device)
+
+        #set to training mode
+        self.client_model.train()
+
+        #create loss criterion and optimizer based on optim
+        criterion = nn.NLLLoss()
+
+        if self.args.optim == "sgd":
+            optimizer = torch.optim.SGD(
+                self.client_model.parameters(),
+                lr=lr,
+                momentum=self.args.momentum
+            )
+        elif self.args.optim == "adam":
+            optimizer = torch.optim.Adam(
+                self.client_model.parameters(),
+                lr=lr
+            )
+        
+        #training loop
+        for epoch in range(local_ep):
+            epoch_loss = 0.0
+            num_batches = 0
+
+            for data, target in self.local_training_data:
+
+                #move data to device
+                data = data.to(self.device)
+                target = target.to(self.device)
+
+                #zero gradients maybe
+                optimizer.zero_grad()
+
+                #forward
+                output = self.client_model(data)
+
+                #compute loss
+                loss = criterion(output, target)
+
+                #backward
+                loss.backward()
+
+                #clip gradient
+                torch.nn.utils.clip_grad_norm_(
+                    self.client_model.parameters(),
+                    self.args.max_norm
+                )
+
+                #update weights
+                optimizer.step()
+
+                epoch_loss += loss.item()
+                num_batches += 1
+            
+            #log epoch loss
+            avg_loss = epoch_loss / num_batches if num_batches > 0 else 0
+            logging.info(f"Client {self.client_idx} Epoch {epoch} Loss: {avg_loss:.4f}")
+        
+        #return trained model state dict
+        return self.client_model.state_dict()
